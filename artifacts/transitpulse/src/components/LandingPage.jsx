@@ -119,9 +119,6 @@ export default function LandingPage({
 
   const canSearch = origin.trim() && destination.trim();
 
-  const runningBuses  = buses.filter((b) => b.status === "running").length;
-  const delayedBuses  = buses.filter((b) => b.status === "delayed").length;
-
   return (
     <div
       className="flex flex-col min-h-full overflow-y-auto no-scrollbar"

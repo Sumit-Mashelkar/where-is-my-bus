@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ThumbsUp, ThumbsDown, ShieldCheck, Clock, Users,
@@ -24,7 +24,8 @@ const CONF_CONFIG = {
   low:    { color: "#ef4444", bg: "#1f0d0d", border: "#7f1d1d", label: "Low Confidence"  },
 };
 
-/* ── time formatter ── */
+const VERIFY_THRESHOLD = 3; // confirms needed
+
 function timeAgo(iso) {
   if (!iso) return "";
   const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -34,13 +35,17 @@ function timeAgo(iso) {
   return `${Math.floor(s / 3600)}h ago`;
 }
 
-/* ── single update card ── */
-function UpdateCard({ upd, onVote, currentUserId }) {
+/* ── single update card (memoised) ── */
+const UpdateCard = ({ upd, onVote, currentUserId, votingId }) => {
   const conf    = CONF_CONFIG[upd.confidence_label] || CONF_CONFIG.low;
   const isOwn   = upd.is_own || upd.reported_by === currentUserId;
   const hasVoted = upd.user_vote !== null && upd.user_vote !== undefined;
   const total   = upd.confirmations + upd.rejections;
   const pct     = total > 0 ? Math.round((upd.confirmations / total) * 100) : 50;
+  const isVoting = votingId === upd.update_id;
+
+  /* verification progress */
+  const verifyPct = Math.min(100, Math.round((upd.confirmations / VERIFY_THRESHOLD) * 100));
 
   return (
     <motion.div
@@ -51,7 +56,7 @@ function UpdateCard({ upd, onVote, currentUserId }) {
       className="rounded-2xl overflow-hidden"
       style={{ background: "#141420", border: `1px solid ${upd.verified ? "#22c55e33" : "#1e1e2e"}` }}
     >
-      {/* Top bar: verified / confidence */}
+      {/* Top bar */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-2 gap-2">
         {upd.verified ? (
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold"
@@ -66,7 +71,6 @@ function UpdateCard({ upd, onVote, currentUserId }) {
             Unverified
           </div>
         )}
-
         <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-medium shrink-0"
           style={{ background: conf.bg, color: conf.color, border: `1px solid ${conf.border}` }}>
           <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: conf.color }} />
@@ -82,27 +86,43 @@ function UpdateCard({ upd, onVote, currentUserId }) {
         </p>
 
         {/* Confidence bar */}
-        <div className="mt-2 mb-1.5">
+        <div className="mt-2 mb-1">
+          <div className="flex justify-between text-[10px] mb-1" style={{ color: "#4b5563" }}>
+            <span>{pct}% agreement</span>
+            <span>{total} vote{total !== 1 ? "s" : ""}</span>
+          </div>
           <div className="h-1 rounded-full overflow-hidden" style={{ background: "#1e1e2e" }}>
             <motion.div
               className="h-full rounded-full"
               style={{ background: conf.color }}
               initial={{ width: 0 }}
               animate={{ width: `${pct}%` }}
-              transition={{ duration: 0.6, ease: "easeOut" }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
             />
           </div>
         </div>
 
+        {/* Verification progress (only if unverified) */}
+        {!upd.verified && upd.confirmations < VERIFY_THRESHOLD && (
+          <div className="mt-1.5 mb-1">
+            <div className="flex justify-between text-[10px] mb-1" style={{ color: "#374151" }}>
+              <span>Verification progress</span>
+              <span>{upd.confirmations}/{VERIFY_THRESHOLD} confirms</span>
+            </div>
+            <div className="h-0.5 rounded-full overflow-hidden" style={{ background: "#1e1e2e" }}>
+              <motion.div
+                className="h-full rounded-full"
+                style={{ background: "#818cf8" }}
+                initial={{ width: 0 }}
+                animate={{ width: `${verifyPct}%` }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Meta */}
-        <div className="flex items-center gap-1.5 text-xs" style={{ color: "#4b5563" }}>
-          <Users className="w-3 h-3 shrink-0" />
-          <span>
-            {upd.confirmations + upd.rejections > 0
-              ? `${upd.confirmations + upd.rejections} passenger${upd.confirmations + upd.rejections !== 1 ? "s" : ""} responded`
-              : "No votes yet"}
-          </span>
-          <span>·</span>
+        <div className="flex items-center gap-1.5 text-xs mt-1.5" style={{ color: "#4b5563" }}>
           <Clock className="w-3 h-3 shrink-0" />
           <span>{timeAgo(upd.created_at)}</span>
           {upd.verified && upd.verified_at && (
@@ -117,43 +137,38 @@ function UpdateCard({ upd, onVote, currentUserId }) {
       {/* Vote row */}
       <div className="flex items-center gap-2 px-3.5 pb-3">
         {isOwn ? (
-          <p className="text-xs italic" style={{ color: "#374151" }}>Your report · awaiting community votes</p>
+          <p className="text-xs italic" style={{ color: "#374151" }}>
+            Your report · {upd.confirmations} confirm{upd.confirmations !== 1 ? "s" : ""} so far
+          </p>
         ) : hasVoted ? (
           <div className="flex items-center gap-2 flex-1">
-            <motion.button
-              whileTap={{ scale: 0.93 }}
-              onClick={() => {}}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold"
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold"
               style={{
                 background: upd.user_vote === "confirm" ? "#0d2a1a" : "#141420",
                 border: `1.5px solid ${upd.user_vote === "confirm" ? "#22c55e" : "#1e1e2e"}`,
                 color: upd.user_vote === "confirm" ? "#22c55e" : "#374151",
-                cursor: "default",
-              }}
-            >
+              }}>
               <ThumbsUp className="w-3.5 h-3.5" />
               {upd.confirmations}
-            </motion.button>
-            <motion.button
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold"
+            </div>
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold"
               style={{
                 background: upd.user_vote === "reject" ? "#1f0d0d" : "#141420",
                 border: `1.5px solid ${upd.user_vote === "reject" ? "#ef4444" : "#1e1e2e"}`,
                 color: upd.user_vote === "reject" ? "#ef4444" : "#374151",
-                cursor: "default",
-              }}
-            >
+              }}>
               <ThumbsDown className="w-3.5 h-3.5" />
               {upd.rejections}
-            </motion.button>
-            <span className="text-xs ml-1" style={{ color: "#374151" }}>Voted</span>
+            </div>
+            <span className="text-xs" style={{ color: "#374151" }}>Voted</span>
           </div>
         ) : (
           <div className="flex items-center gap-2 flex-1">
             <motion.button
               whileTap={{ scale: 0.93 }}
-              onClick={() => onVote(upd.update_id, "confirm")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
+              onClick={() => !isVoting && onVote(upd.update_id, "confirm")}
+              disabled={isVoting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-opacity disabled:opacity-50"
               style={{ background: "#0d2a1a", border: "1.5px solid #166534", color: "#22c55e" }}
             >
               <ThumbsUp className="w-3.5 h-3.5" />
@@ -161,8 +176,9 @@ function UpdateCard({ upd, onVote, currentUserId }) {
             </motion.button>
             <motion.button
               whileTap={{ scale: 0.93 }}
-              onClick={() => onVote(upd.update_id, "reject")}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors"
+              onClick={() => !isVoting && onVote(upd.update_id, "reject")}
+              disabled={isVoting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-opacity disabled:opacity-50"
               style={{ background: "#1f0d0d", border: "1.5px solid #7f1d1d", color: "#ef4444" }}
             >
               <ThumbsDown className="w-3.5 h-3.5" />
@@ -173,14 +189,19 @@ function UpdateCard({ upd, onVote, currentUserId }) {
       </div>
     </motion.div>
   );
-}
+};
 
 /* ══════════════════════════════════════════════════════════════ */
 export default function CommunityUpdates({ busId }) {
   const [updates, setUpdates]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [collapsed, setCollapsed] = useState(false);
+  const [votingId, setVotingId]   = useState(null); // which update is being voted on
   const userId = getUserId();
+
+  /* stable ref so socket handlers never go stale */
+  const updatesRef = useRef(updates);
+  useEffect(() => { updatesRef.current = updates; }, [updates]);
 
   const loadUpdates = useCallback(async () => {
     if (!busId) return;
@@ -188,34 +209,32 @@ export default function CommunityUpdates({ busId }) {
       const data = await get(`/buses/${busId}/updates?user_id=${encodeURIComponent(userId)}`);
       setUpdates(data);
     } catch {
-      /* silent */
+      /* silent — stale data served from cache */
     }
     setLoading(false);
   }, [busId, userId]);
 
   useEffect(() => { loadUpdates(); }, [loadUpdates]);
 
-  /* live socket updates */
+  /* ── socket: only update the changed item ── */
   useEffect(() => {
-    const patch = (incoming) => {
+    const patchNew = (incoming) => {
       if (incoming.bus_id !== busId) return;
       setUpdates((prev) => {
         const idx = prev.findIndex((u) => u.update_id === incoming.update_id);
         const enriched = {
           ...incoming,
-          is_own: incoming.reported_by === userId,
+          is_own:    incoming.reported_by === userId,
           user_vote: idx >= 0 ? prev[idx].user_vote : null,
         };
         if (idx >= 0) {
-          const next = [...prev];
-          next[idx] = { ...next[idx], ...enriched };
-          return next;
+          const next = [...prev]; next[idx] = { ...next[idx], ...enriched }; return next;
         }
         return [enriched, ...prev].slice(0, 15);
       });
     };
 
-    const onVoted = (incoming) => {
+    const patchVote = (incoming) => {
       setUpdates((prev) => {
         const idx = prev.findIndex((u) => u.update_id === incoming.update_id);
         if (idx < 0) return prev;
@@ -233,19 +252,43 @@ export default function CommunityUpdates({ busId }) {
       });
     };
 
-    socket.on("update_created",  patch);
-    socket.on("update_voted",    onVoted);
-    socket.on("update_verified", onVoted);
+    socket.on("update_created",  patchNew);
+    socket.on("update_voted",    patchVote);
+    socket.on("update_verified", patchVote);
     return () => {
-      socket.off("update_created",  patch);
-      socket.off("update_voted",    onVoted);
-      socket.off("update_verified", onVoted);
+      socket.off("update_created",  patchNew);
+      socket.off("update_voted",    patchVote);
+      socket.off("update_verified", patchVote);
     };
   }, [busId, userId]);
 
-  const handleVote = async (updateId, vote) => {
+  /* ── optimistic vote ── */
+  const handleVote = useCallback(async (updateId, vote) => {
+    if (votingId) return; // already processing a vote
+    setVotingId(updateId);
+
+    /* optimistic patch */
+    setUpdates((prev) =>
+      prev.map((u) => {
+        if (u.update_id !== updateId) return u;
+        const delta = vote === "confirm"
+          ? { confirmations: u.confirmations + 1 }
+          : { rejections: u.rejections + 1 };
+        const total = u.confirmations + u.rejections + 1;
+        const newConf = (u.confirmations + (vote === "confirm" ? 1 : 0)) / total;
+        return {
+          ...u,
+          ...delta,
+          user_vote: vote,
+          confidence: newConf,
+          confidence_label: newConf >= 0.7 ? "high" : newConf >= 0.4 ? "medium" : "low",
+        };
+      }),
+    );
+
     try {
       const result = await post(`/updates/${updateId}/vote`, { user_id: userId, vote });
+      /* reconcile with server truth */
       setUpdates((prev) =>
         prev.map((u) =>
           u.update_id === updateId
@@ -264,20 +307,32 @@ export default function CommunityUpdates({ busId }) {
       );
       toast.success(vote === "confirm" ? "Confirmed — thanks!" : "Marked as incorrect");
     } catch (e) {
+      /* revert optimistic patch on error */
+      setUpdates((prev) =>
+        prev.map((u) => {
+          if (u.update_id !== updateId) return u;
+          const delta = vote === "confirm"
+            ? { confirmations: Math.max(0, u.confirmations - 1) }
+            : { rejections: Math.max(0, u.rejections - 1) };
+          return { ...u, ...delta, user_vote: null };
+        }),
+      );
       const detail = e?.response?.data?.detail;
       if (detail === "already_voted") return toast.info("You already voted on this report");
       if (detail === "Cannot vote on your own report") return toast.info("Can't vote on your own report");
-      toast.error("Vote failed");
+      toast.error("Vote failed — please try again");
+    } finally {
+      setVotingId(null);
     }
-  };
+  }, [votingId, userId]);
 
   /* ── render ── */
   return (
-    <div className="px-5 pb-2">
+    <div className="px-1 pb-2">
       {/* Section header */}
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="w-full flex items-center justify-between py-3"
+        className="w-full flex items-center justify-between py-3 px-4"
       >
         <div className="flex items-center gap-2">
           <Sparkles className="w-3.5 h-3.5" style={{ color: "#818cf8" }} />
@@ -285,10 +340,8 @@ export default function CommunityUpdates({ busId }) {
             Community Reports
           </span>
           {updates.length > 0 && (
-            <span
-              className="text-xs font-bold px-1.5 py-0.5 rounded-full"
-              style={{ background: "#1a1a2e", color: "#818cf8" }}
-            >
+            <span className="text-xs font-bold px-1.5 py-0.5 rounded-full"
+              style={{ background: "#1a1a2e", color: "#818cf8" }}>
               {updates.length}
             </span>
           )}
@@ -304,8 +357,8 @@ export default function CommunityUpdates({ busId }) {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
-            className="overflow-hidden"
+            transition={{ duration: 0.22 }}
+            className="overflow-hidden px-4"
           >
             {loading ? (
               <div className="flex flex-col gap-2 pb-2">
@@ -329,15 +382,15 @@ export default function CommunityUpdates({ busId }) {
                       upd={u}
                       onVote={handleVote}
                       currentUserId={userId}
+                      votingId={votingId}
                     />
                   ))}
                 </AnimatePresence>
               </div>
             )}
 
-            {/* Legend */}
             {updates.length > 0 && (
-              <p className="text-center text-xs pb-3" style={{ color: "#1e1e2e" }}>
+              <p className="text-center text-[10px] pb-3" style={{ color: "#1e2a3e" }}>
                 3+ confirms with 70%+ agreement = verified
               </p>
             )}

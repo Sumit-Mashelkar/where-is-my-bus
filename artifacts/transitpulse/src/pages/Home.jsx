@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { get, post } from "@/lib/api";
+import { get, post, bustAllCache } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
 import { socket } from "@/lib/socket";
 import { getUserId } from "@/lib/userId";
@@ -29,7 +29,25 @@ const MAX_HISTORY = 6;
 function loadHistory()  { try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; } }
 function saveHistory(h) { try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h.slice(0, MAX_HISTORY))); } catch {} }
 function loadSaved()    { try { return JSON.parse(localStorage.getItem(SAVED_KEY)   || "[]"); } catch { return []; } }
-function saveSaved(s)   { try { localStorage.setItem(SAVED_KEY,   JSON.stringify(s)); } catch {} }
+
+/* ── sessionStorage data cache (30s TTL) ── */
+const SS_BUSES_KEY = "tp_ss_buses";
+const SS_STOPS_KEY = "tp_ss_stops";
+const SS_TTL = 30_000;
+
+function ssLoad(key) {
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const { data, expiry } = JSON.parse(raw);
+    if (Date.now() > expiry) { sessionStorage.removeItem(key); return null; }
+    return data;
+  } catch { return null; }
+}
+
+function ssSave(key, data) {
+  try { sessionStorage.setItem(key, JSON.stringify({ data, expiry: Date.now() + SS_TTL })); } catch {}
+}
 
 /* ── Nearby buses sheet ── */
 function haversineKm(lat1, lng1, lat2, lng2) {
@@ -59,7 +77,10 @@ function NearbySheet({ open, onClose, buses, onPick }) {
     );
   }, [open, buses]);
 
-  useEffect(() => { document.body.style.overflow = open ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [open]);
+  useEffect(() => {
+    document.body.style.overflow = open ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
 
   return (
     <AnimatePresence>
@@ -71,14 +92,22 @@ function NearbySheet({ open, onClose, buses, onPick }) {
             transition={{ type:"spring", damping:30, stiffness:320 }}
             className="fixed inset-x-0 bottom-0 z-[61] rounded-t-3xl flex flex-col"
             style={{ background:"#0f0f1a", maxHeight:"70dvh", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)" }}>
-            <div className="flex justify-center pt-3 pb-1"><div className="w-10 h-1 rounded-full" style={{ background:"#2d2d4e" }}/></div>
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 rounded-full" style={{ background:"#2d2d4e" }}/>
+            </div>
             <div className="px-5 pb-3 shrink-0" style={{ borderBottom:"1px solid #1e1e2e" }}>
               <p className="text-white font-bold text-base">Nearby Buses</p>
               <p className="text-xs mt-0.5" style={{ color:"#4b5563" }}>Sorted by distance from your location</p>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {loading && <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"/></div>}
-              {!loading && sorted.length === 0 && <p className="text-center text-sm py-10" style={{ color:"#374151" }}>No buses with known location</p>}
+              {loading && (
+                <div className="flex items-center justify-center py-12">
+                  <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"/>
+                </div>
+              )}
+              {!loading && sorted.length === 0 && (
+                <p className="text-center text-sm py-10" style={{ color:"#374151" }}>No buses with known location</p>
+              )}
               {sorted.map((b) => {
                 const color = statusColor(b.status);
                 return (
@@ -115,7 +144,10 @@ function ProfileSheet({ open, onClose, theme, toggle, searchHistory, onClearHist
     get(`/users/${encodeURIComponent(userId)}/reputation`).then(setRep).catch(() => {});
   }, [open, userId]);
 
-  useEffect(() => { document.body.style.overflow = open ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [open]);
+  useEffect(() => {
+    document.body.style.overflow = open ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
 
   const BADGE_CFG = {
     "Trusted Commuter":  { color:"#22c55e", Icon:Shield },
@@ -135,7 +167,9 @@ function ProfileSheet({ open, onClose, theme, toggle, searchHistory, onClearHist
             transition={{ type:"spring", damping:30, stiffness:320 }}
             className="fixed inset-x-0 bottom-0 z-[61] rounded-t-3xl flex flex-col"
             style={{ background:"#0f0f1a", maxHeight:"80dvh", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)" }}>
-            <div className="flex justify-center pt-3 pb-1"><div className="w-10 h-1 rounded-full" style={{ background:"#2d2d4e" }}/></div>
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 rounded-full" style={{ background:"#2d2d4e" }}/>
+            </div>
             <div className="px-5 py-4 shrink-0 flex items-center justify-between" style={{ borderBottom:"1px solid #1e1e2e" }}>
               <p className="text-white font-bold text-base">Profile</p>
               <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full" style={{ background:"#1a1a2e" }}>
@@ -143,7 +177,6 @@ function ProfileSheet({ open, onClose, theme, toggle, searchHistory, onClearHist
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
-              {/* Avatar + ID */}
               <div className="flex items-center gap-4 p-4 rounded-2xl" style={{ background:"#141420", border:"1px solid #1e1e2e" }}>
                 <div className="w-14 h-14 flex items-center justify-center rounded-2xl font-black text-xl"
                   style={{ background:"#818cf822", color:"#818cf8", border:"1px solid #818cf844" }}>
@@ -161,7 +194,6 @@ function ProfileSheet({ open, onClose, theme, toggle, searchHistory, onClearHist
                   )}
                 </div>
               </div>
-              {/* Stats */}
               {rep && (
                 <div className="grid grid-cols-3 gap-2">
                   {[
@@ -176,15 +208,18 @@ function ProfileSheet({ open, onClose, theme, toggle, searchHistory, onClearHist
                   ))}
                 </div>
               )}
-              {/* Settings */}
               <div className="space-y-2">
                 <p className="text-xs font-bold uppercase tracking-widest" style={{ color:"#374151" }}>Settings</p>
                 <motion.button onClick={toggle} whileTap={{ scale:0.97 }}
                   className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl"
                   style={{ background:"#141420", border:"1px solid #1e1e2e" }}>
                   <div className="flex items-center gap-3">
-                    {theme==="dark" ? <Sun className="w-4 h-4" style={{ color:"#eab308" }}/> : <Moon className="w-4 h-4" style={{ color:"#818cf8" }}/>}
-                    <span className="text-sm font-medium text-white">{theme==="dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}</span>
+                    {theme==="dark"
+                      ? <Sun className="w-4 h-4" style={{ color:"#eab308" }}/>
+                      : <Moon className="w-4 h-4" style={{ color:"#818cf8" }}/>}
+                    <span className="text-sm font-medium text-white">
+                      {theme==="dark" ? "Switch to Light Mode" : "Switch to Dark Mode"}
+                    </span>
                   </div>
                 </motion.button>
                 {searchHistory.length > 0 && (
@@ -205,7 +240,7 @@ function ProfileSheet({ open, onClose, theme, toggle, searchHistory, onClearHist
 }
 
 /* ── Top navigation bar ── */
-function TopBar({ onMenuOpen, onBellClick, pendingCount, connected, theme }) {
+function TopBar({ onMenuOpen, onBellClick, pendingCount, connected }) {
   return (
     <div
       className="fixed top-0 left-0 right-0 z-[35] flex items-center justify-between px-4"
@@ -217,14 +252,12 @@ function TopBar({ onMenuOpen, onBellClick, pendingCount, connected, theme }) {
         backdropFilter: "blur(20px)",
       }}
     >
-      {/* Hamburger */}
       <motion.button onClick={onMenuOpen} whileTap={{ scale:0.88 }}
         className="w-9 h-9 flex items-center justify-center rounded-2xl"
         style={{ background:"#141420", border:"1px solid #1e1e2e" }}>
         <Menu className="w-4 h-4" style={{ color:"#9ca3af" }} />
       </motion.button>
 
-      {/* Title */}
       <div className="flex items-center gap-2">
         <div className="w-6 h-6 flex items-center justify-center rounded-lg" style={{ background:"#818cf822" }}>
           <Bus className="w-3.5 h-3.5" style={{ color:"#818cf8" }} />
@@ -239,7 +272,6 @@ function TopBar({ onMenuOpen, onBellClick, pendingCount, connected, theme }) {
         </div>
       </div>
 
-      {/* Bell */}
       <motion.button onClick={onBellClick} whileTap={{ scale:0.88 }}
         className="relative w-9 h-9 flex items-center justify-center rounded-2xl"
         style={{ background:"#141420", border:"1px solid #1e1e2e" }}>
@@ -255,16 +287,22 @@ function TopBar({ onMenuOpen, onBellClick, pendingCount, connected, theme }) {
   );
 }
 
-/* ── Sidebar (hamburger drawer, slides from left) ── */
+/* ── Sidebar ── */
 function Sidebar({ open, onClose, onAction, theme, toggle, buses, pendingCount }) {
   const items = [
-    { id:"live",    Icon: Bus,          label:"Live Map",          sub:"Full-screen bus map",     color:"#22c55e" },
-    { id:"add",     Icon: Activity,     label:"Add Route",         sub:"Propose a new route",     color:"#818cf8" },
-    { id:"updates", Icon: Bell,         label:"Community Updates", sub:"Vote on proposals",        color:"#f472b6", badge: pendingCount || null },
-    { id:"report",  Icon: Clock,        label:"Report Delay",      sub:"Update bus status",        color:"#eab308" },
-    { id:"theme",   Icon: theme==="dark" ? Sun : Moon, label: theme==="dark" ? "Light Mode" : "Dark Mode", sub:"Toggle map theme", color:"#a78bfa" },
+    { id:"live",    Icon: Bus,          label:"Live Map",          sub:"Full-screen bus map",   color:"#22c55e" },
+    { id:"add",     Icon: Activity,     label:"Add Route",         sub:"Propose a new route",   color:"#818cf8" },
+    { id:"updates", Icon: Bell,         label:"Community Updates", sub:"Vote on proposals",      color:"#f472b6", badge: pendingCount || null },
+    { id:"report",  Icon: Clock,        label:"Report Delay",      sub:"Update bus status",      color:"#eab308" },
+    { id:"theme",   Icon: theme==="dark" ? Sun : Moon,
+      label: theme==="dark" ? "Light Mode" : "Dark Mode",
+      sub:"Toggle map theme", color:"#a78bfa" },
   ];
-  useEffect(() => { document.body.style.overflow = open ? "hidden" : ""; return () => { document.body.style.overflow = ""; }; }, [open]);
+
+  useEffect(() => {
+    document.body.style.overflow = open ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
 
   return (
     <AnimatePresence>
@@ -330,15 +368,13 @@ function Sidebar({ open, onClose, onAction, theme, toggle, buses, pendingCount }
 }
 
 /* ══════════════════════════════════════════════════════════════ */
-/*  Main Home controller                                         */
-/* ══════════════════════════════════════════════════════════════ */
 export default function Home() {
   const { theme, toggle } = useTheme();
   const userId = getUserId();
 
-  /* data */
-  const [stops, setStops] = useState([]);
-  const [buses, setBuses] = useState([]);
+  /* data — seed from sessionStorage for instant render */
+  const [stops, setStops] = useState(() => ssLoad(SS_STOPS_KEY) || []);
+  const [buses, setBuses] = useState(() => ssLoad(SS_BUSES_KEY) || []);
 
   /* search */
   const [origin,      setOrigin]      = useState("");
@@ -346,35 +382,42 @@ export default function Home() {
   const [searching,   setSearching]   = useState(false);
   const [results,     setResults]     = useState(null);
 
-  /* view: "home" | "map" | "results" | "timeline" */
-  const [view, setView]       = useState("home");
+  /* view */
+  const [view,      setView]      = useState("home");
   const [activeTab, setActiveTab] = useState("home");
 
   /* selected bus */
   const [activeBus,    setActiveBus]    = useState(null);
   const [updateLocBus, setUpdateLocBus] = useState(null);
 
-  /* panel states */
-  const [sidebarOpen,  setSidebarOpen]  = useState(false);
-  const [addRouteOpen, setAddRouteOpen] = useState(false);
-  const [updatesOpen,  setUpdatesOpen]  = useState(false);
-  const [busPickerOpen,setBusPickerOpen]= useState(false);
-  const [nearbyOpen,   setNearbyOpen]   = useState(false);
-  const [profileOpen,  setProfileOpen]  = useState(false);
+  /* panels */
+  const [sidebarOpen,   setSidebarOpen]   = useState(false);
+  const [addRouteOpen,  setAddRouteOpen]  = useState(false);
+  const [updatesOpen,   setUpdatesOpen]   = useState(false);
+  const [busPickerOpen, setBusPickerOpen] = useState(false);
+  const [nearbyOpen,    setNearbyOpen]    = useState(false);
+  const [profileOpen,   setProfileOpen]   = useState(false);
 
-  /* pending count for badge */
   const [pendingCount, setPendingCount] = useState(0);
+  const [connected,    setConnected]    = useState(socket.connected);
 
-  /* socket */
-  const [connected, setConnected] = useState(socket.connected);
-
-  /* localStorage */
   const [searchHistory, setSearchHistory] = useState(loadHistory);
-  const [savedRoutes,   setSavedRoutes]   = useState(loadSaved);
+  const [savedRoutes]                     = useState(loadSaved);
 
-  /* ── data loading ── */
-  const refresh = useCallback(async () => {
-    try { const [s,b] = await Promise.all([get("/stops"), get("/buses")]); setStops(s); setBuses(b); } catch {}
+  /* ── stable refs for socket handlers ── */
+  const busesRef = useRef(buses);
+  useEffect(() => { busesRef.current = buses; }, [buses]);
+
+  /* ── data loading with sessionStorage cache ── */
+  const refresh = useCallback(async (force = false) => {
+    try {
+      if (force) bustAllCache();
+      const [s, b] = await Promise.all([get("/stops"), get("/buses")]);
+      setStops(s);
+      setBuses(b);
+      ssSave(SS_STOPS_KEY, s);
+      ssSave(SS_BUSES_KEY, b);
+    } catch { /* serve from state / sessionStorage */ }
   }, []);
 
   const refreshPending = useCallback(async () => {
@@ -384,34 +427,52 @@ export default function Home() {
     } catch {}
   }, [userId]);
 
+  /* initial load */
   useEffect(() => { refresh(); refreshPending(); }, [refresh, refreshPending]);
 
-  /* ── socket ── */
+  /* ── socket — stable handlers via refs ── */
   useEffect(() => {
-    const onConnect    = () => setConnected(true);
+    const onConnect = () => {
+      setConnected(true);
+      /* re-fetch on reconnect to sync missed updates */
+      refresh(true);
+      refreshPending();
+    };
     const onDisconnect = () => setConnected(false);
-    const onLocation   = (p) => setBuses((prev) => prev.map((b) =>
-      b.bus_id === p.bus_id ? { ...b, current_lat:p.lat, current_lng:p.lng, status:p.status||b.status } : b));
+
+    const onLocation = (p) => {
+      setBuses((prev) => prev.map((b) =>
+        b.bus_id === p.bus_id
+          ? { ...b, current_lat: p.lat, current_lng: p.lng, status: p.status || b.status }
+          : b,
+      ));
+    };
+
+    const onBusAdded   = () => refresh();
+    const onRouteEvent = () => { refresh(); refreshPending(); };
+    const onRouteVoted = (r) => { if (r.status !== "pending") refreshPending(); };
+
     socket.on("connect",        onConnect);
     socket.on("disconnect",     onDisconnect);
     socket.on("bus_location",   onLocation);
-    socket.on("bus_added",      refresh);
+    socket.on("bus_added",      onBusAdded);
     socket.on("route_proposed", refreshPending);
-    socket.on("route_verified", () => { refresh(); refreshPending(); });
-    socket.on("route_voted",    (r) => { if (r.status !== "pending") refreshPending(); });
+    socket.on("route_verified", onRouteEvent);
+    socket.on("route_voted",    onRouteVoted);
+
     return () => {
       socket.off("connect",        onConnect);
       socket.off("disconnect",     onDisconnect);
       socket.off("bus_location",   onLocation);
-      socket.off("bus_added",      refresh);
+      socket.off("bus_added",      onBusAdded);
       socket.off("route_proposed", refreshPending);
-      socket.off("route_verified");
-      socket.off("route_voted");
+      socket.off("route_verified", onRouteEvent);
+      socket.off("route_voted",    onRouteVoted);
     };
   }, [refresh, refreshPending]);
 
   /* ── search ── */
-  const doSearch = async () => {
+  const doSearch = useCallback(async () => {
     if (!origin.trim() || !destination.trim()) return;
     setSearching(true);
     try {
@@ -424,7 +485,6 @@ export default function Home() {
       } else if (r.buses.length === 0) {
         toast.message("No direct buses found");
       } else {
-        /* save to history */
         const entry = {
           id: Date.now().toString(),
           origin: origin.trim(),
@@ -436,62 +496,61 @@ export default function Home() {
         setSearchHistory(next);
         saveHistory(next);
       }
-    } catch { toast.error("Search failed"); }
+    } catch { toast.error("Search failed — please try again"); }
     setSearching(false);
-  };
+  }, [origin, destination, searchHistory]);
 
   /* ── navigation ── */
-  const selectBus       = (bus) => { setActiveBus(bus); setView("timeline"); };
-  const backFromTimeline = () => { setView(results ? "results" : "home"); setActiveBus(null); if (!results) setActiveTab("home"); };
-  const backFromResults  = () => { setView("home"); setResults(null); setActiveTab("home"); };
+  const selectBus        = useCallback((bus) => { setActiveBus(bus); setView("timeline"); }, []);
+  const backFromTimeline = useCallback(() => {
+    setView(results ? "results" : "home");
+    setActiveBus(null);
+    if (!results) setActiveTab("home");
+  }, [results]);
+  const backFromResults = useCallback(() => { setView("home"); setResults(null); setActiveTab("home"); }, []);
 
-  /* ── quick card / sidebar actions ── */
-  const handleAction = (id) => {
+  /* ── sidebar / quick card actions ── */
+  const handleAction = useCallback((id) => {
     if (id === "live")    { setView("map"); setActiveTab("live"); }
-    if (id === "search")  { setView("home"); setActiveTab("home"); /* focus search */ }
+    if (id === "search")  { setView("home"); setActiveTab("home"); }
     if (id === "nearby")  setNearbyOpen(true);
     if (id === "add")     setAddRouteOpen(true);
     if (id === "updates") { setUpdatesOpen(true); setActiveTab("updates"); }
     if (id === "report")  setBusPickerOpen(true);
-    if (id === "saved")   {}           /* handled by searchHistory select */
     if (id === "stats")   { setView("map"); setActiveTab("live"); }
-  };
+  }, []);
 
   /* ── bottom nav ── */
-  const handleTabChange = (tab) => {
+  const handleTabChange = useCallback((tab) => {
     setActiveTab(tab);
-    if (tab === "home")    { setView("home"); }
+    if (tab === "home")    setView("home");
     if (tab === "routes")  { if (!results) setView("home"); else setView("results"); }
-    if (tab === "live")    { setView("map"); }
-    if (tab === "updates") { setUpdatesOpen(true); }
-    if (tab === "profile") { setProfileOpen(true); }
-  };
+    if (tab === "live")    setView("map");
+    if (tab === "updates") setUpdatesOpen(true);
+    if (tab === "profile") setProfileOpen(true);
+  }, [results]);
 
   /* ── history ── */
-  const handleHistorySelect = (item) => {
+  const handleHistorySelect = useCallback((item) => {
     setOrigin(item.origin);
     setDestination(item.destination);
-  };
-  const handleRemoveHistory = (id) => {
+  }, []);
+  const handleRemoveHistory = useCallback((id) => {
     const next = id === "all" ? [] : searchHistory.filter((x) => x.id !== id);
     setSearchHistory(next);
     saveHistory(next);
-  };
-  const clearHistory = () => { setSearchHistory([]); saveHistory([]); };
+  }, [searchHistory]);
+  const clearHistory = useCallback(() => { setSearchHistory([]); saveHistory([]); }, []);
 
-  /* ── map route stops (for polyline) ── */
-  const routeStops = results?.buses?.[0]?.segment_stops || null;
-
-  /* ── show bottom nav? ── */
+  /* ── derived ── */
+  const routeStops   = results?.buses?.[0]?.segment_stops || null;
   const showBottomNav = view === "home" || view === "map";
-
-  /* ── top bar padding for scrollable content ── */
-  const topBarHeight = 64; // approximate
+  const topBarHeight  = 64;
 
   return (
     <div className="relative w-screen h-[100dvh] overflow-hidden" style={{ background:"#0A0A0F" }}>
 
-      {/* ── Map (render for map/results/timeline views) ── */}
+      {/* Map (render for non-home views) */}
       {view !== "home" && (
         <MapView
           theme={theme}
@@ -504,12 +563,9 @@ export default function Home() {
         />
       )}
 
-      {/* ── Home landing page ── */}
+      {/* Home landing */}
       {view === "home" && (
-        <div
-          className="absolute inset-0 overflow-y-auto no-scrollbar"
-          style={{ paddingTop: topBarHeight }}
-        >
+        <div className="absolute inset-0 overflow-y-auto no-scrollbar" style={{ paddingTop: topBarHeight }}>
           <LandingPage
             stops={stops}
             buses={buses}
@@ -530,12 +586,10 @@ export default function Home() {
         </div>
       )}
 
-      {/* ── Map view top controls ── */}
+      {/* Map view top controls */}
       {view === "map" && (
-        <div
-          className="absolute top-0 left-0 right-0 z-[30] flex items-center justify-between px-4"
-          style={{ paddingTop:"max(env(safe-area-inset-top),12px)", paddingBottom:12 }}
-        >
+        <div className="absolute top-0 left-0 right-0 z-[30] flex items-center justify-between px-4"
+          style={{ paddingTop:"max(env(safe-area-inset-top),12px)", paddingBottom:12 }}>
           <motion.button onClick={() => { setView("home"); setActiveTab("home"); }} whileTap={{ scale:0.88 }}
             className="flex items-center gap-2 px-3 py-2 rounded-2xl"
             style={{ background:"rgba(15,15,26,0.92)", border:"1px solid #1e1e2e", backdropFilter:"blur(20px)" }}>
@@ -553,18 +607,17 @@ export default function Home() {
         </div>
       )}
 
-      {/* ── Top navigation bar (home view only) ── */}
+      {/* Top nav (home only) */}
       {view === "home" && (
         <TopBar
           onMenuOpen={() => setSidebarOpen(true)}
           onBellClick={() => { setUpdatesOpen(true); setActiveTab("updates"); }}
           pendingCount={pendingCount}
           connected={connected}
-          theme={theme}
         />
       )}
 
-      {/* ── Overlay views ── */}
+      {/* Overlay views */}
       <AnimatePresence mode="wait">
         {view === "results" && results && (
           <SearchResults key="results" results={results} onBusSelect={selectBus} onBack={backFromResults} />
@@ -575,16 +628,12 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* ── Bottom navigation ── */}
+      {/* Bottom nav */}
       {showBottomNav && (
-        <BottomNav
-          active={activeTab}
-          onChange={handleTabChange}
-          badge={{ updates: pendingCount }}
-        />
+        <BottomNav active={activeTab} onChange={handleTabChange} badge={{ updates: pendingCount }} />
       )}
 
-      {/* ── Left sidebar ── */}
+      {/* Sidebar */}
       <Sidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -595,7 +644,7 @@ export default function Home() {
         pendingCount={pendingCount}
       />
 
-      {/* ── All sheets & dialogs ── */}
+      {/* Sheets & dialogs */}
       <AddRouteSheet
         open={addRouteOpen}
         onClose={() => setAddRouteOpen(false)}
@@ -620,7 +669,8 @@ export default function Home() {
         searchHistory={searchHistory}
         onClearHistory={clearHistory}
       />
-      {/* Bus picker for "Report Delay" */}
+
+      {/* Bus picker for Report Delay */}
       <AnimatePresence>
         {busPickerOpen && (
           <>
@@ -631,7 +681,9 @@ export default function Home() {
               transition={{ type:"spring", damping:30, stiffness:320 }}
               className="fixed inset-x-0 bottom-0 z-[61] rounded-t-3xl flex flex-col"
               style={{ background:"#0f0f1a", maxHeight:"70dvh", boxShadow:"0 -8px 48px rgba(0,0,0,0.6)" }}>
-              <div className="flex justify-center pt-3 pb-1"><div className="w-10 h-1 rounded-full" style={{ background:"#2d2d4e" }}/></div>
+              <div className="flex justify-center pt-3 pb-1">
+                <div className="w-10 h-1 rounded-full" style={{ background:"#2d2d4e" }}/>
+              </div>
               <div className="px-5 pb-3 shrink-0" style={{ borderBottom:"1px solid #1e1e2e" }}>
                 <p className="text-white font-bold text-base">Which bus are you on?</p>
                 <p className="text-xs mt-0.5" style={{ color:"#4b5563" }}>Select to submit a status update</p>
@@ -640,7 +692,8 @@ export default function Home() {
                 {buses.map((b) => {
                   const color = statusColor(b.status);
                   return (
-                    <motion.button key={b.bus_id} onClick={() => { setUpdateLocBus(b); setBusPickerOpen(false); }}
+                    <motion.button key={b.bus_id}
+                      onClick={() => { setUpdateLocBus(b); setBusPickerOpen(false); }}
                       whileTap={{ scale:0.97 }}
                       className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl text-left"
                       style={{ background:"#141420", border:"1px solid #1e1e2e" }}>
@@ -648,7 +701,9 @@ export default function Home() {
                         style={{ background:color+"22", color, border:`1px solid ${color}44` }}>{b.number}</div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-white truncate">{b.name}</p>
-                        {b.direction && <p className="text-xs mt-0.5 truncate" style={{ color:"#4b5563" }}>{b.direction}</p>}
+                        {b.direction && (
+                          <p className="text-xs mt-0.5 truncate" style={{ color:"#4b5563" }}>{b.direction}</p>
+                        )}
                       </div>
                       <span className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-lg uppercase tracking-widest"
                         style={{ background:color+"22", color }}>{b.status}</span>
@@ -660,11 +715,12 @@ export default function Home() {
           </>
         )}
       </AnimatePresence>
+
       <UpdateLocationDialog
         bus={updateLocBus}
         open={!!updateLocBus}
         onClose={() => setUpdateLocBus(null)}
-        onUpdated={() => refresh()}
+        onUpdated={() => refresh(true)}
       />
     </div>
   );

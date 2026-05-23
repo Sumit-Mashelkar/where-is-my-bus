@@ -28,6 +28,31 @@ flask_app = Flask(__name__)
 CORS(flask_app, resources={r"/api/*": {"origins": "*"}})
 
 
+@flask_app.errorhandler(400)
+def bad_request(e):
+    return jsonify({"error": "bad_request", "detail": str(e)}), 400
+
+
+@flask_app.errorhandler(404)
+def not_found(e):
+    return jsonify({"error": "not_found", "detail": str(e)}), 404
+
+
+@flask_app.errorhandler(409)
+def conflict(e):
+    return jsonify({"error": "conflict", "detail": str(e)}), 409
+
+
+@flask_app.errorhandler(429)
+def rate_limited(e):
+    return jsonify({"error": "rate_limited", "detail": "Too many requests"}), 429
+
+
+@flask_app.errorhandler(500)
+def server_error(e):
+    return jsonify({"error": "server_error", "detail": "An internal error occurred"}), 500
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -41,6 +66,10 @@ def get_db() -> sqlite3.Connection:
         g.db = sqlite3.connect(DB_PATH, check_same_thread=False)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
+        g.db.execute("PRAGMA journal_mode = WAL")
+        g.db.execute("PRAGMA synchronous  = NORMAL")
+        g.db.execute("PRAGMA cache_size   = -16000")
+        g.db.execute("PRAGMA temp_store   = MEMORY")
     return g.db
 
 
@@ -225,6 +254,23 @@ def init_db():
             conn.commit()
         except Exception:
             pass
+
+    # Indexes — idempotent, improve read performance
+    for idx_sql in [
+        "CREATE INDEX IF NOT EXISTS idx_bus_updates_bus_time   ON bus_updates(bus_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_bus_updates_verified   ON bus_updates(verified, bus_id)",
+        "CREATE INDEX IF NOT EXISTS idx_bus_updates_merge      ON bus_updates(bus_id, stop_index, status, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_update_votes_lookup    ON update_votes(update_id, user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_bus_stops_bus          ON bus_stops(bus_id, position)",
+        "CREATE INDEX IF NOT EXISTS idx_buses_status           ON buses(status)",
+        "CREATE INDEX IF NOT EXISTS idx_pending_routes_status  ON pending_routes(status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_pending_route_votes    ON pending_route_votes(route_id, user_id)",
+    ]:
+        try:
+            conn.execute(idx_sql)
+        except Exception:
+            pass
+    conn.commit()
 
     cur.execute("SELECT COUNT(*) FROM stops")
     if cur.fetchone()[0] == 0:
