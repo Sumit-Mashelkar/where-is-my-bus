@@ -786,61 +786,122 @@ def get_reputation(user_id):
 
 @flask_app.post("/api/routes/search")
 def search_routes():
-    body   = request.get_json(force=True, silent=True) or {}
-    origin = (body.get("origin")      or "").strip().lower()
-    dest   = (body.get("destination") or "").strip().lower()
-    if not origin or not dest:
+    body     = request.get_json(force=True, silent=True) or {}
+    origin_q = (body.get("origin")      or "").strip().lower()
+    dest_q   = (body.get("destination") or "").strip().lower()
+    if not origin_q or not dest_q:
         return jsonify({"detail": "origin and destination required"}), 400
-    db    = get_db()
-    stops = {r["stop_id"]: dict(r) for r in db.execute("SELECT * FROM stops").fetchall()}
 
-    def match(query: str):
-        for s in stops.values():
-            if query in s["name"].lower():
+    db        = get_db()
+    all_stops = [dict(r) for r in db.execute("SELECT * FROM stops").fetchall()]
+    stops_idx = {s["stop_id"]: s for s in all_stops}
+
+    def best_match(q: str):
+        # 1. Exact (case-insensitive)
+        for s in all_stops:
+            if s["name"].lower() == q:
                 return s
-        return None
+        # 2. Starts-with → prefer shortest
+        sw = [s for s in all_stops if s["name"].lower().startswith(q)]
+        if sw:
+            return min(sw, key=lambda s: len(s["name"]))
+        # 3. Contains → prefer shortest
+        cont = [s for s in all_stops if q in s["name"].lower()]
+        return min(cont, key=lambda s: len(s["name"])) if cont else None
 
-    o_stop = match(origin)
-    d_stop = match(dest)
+    o_stop = best_match(origin_q)
+    d_stop = best_match(dest_q)
+
     if not o_stop or not d_stop:
         return jsonify({
             "origin_stop":      stop_row(o_stop) if o_stop else None,
             "destination_stop": stop_row(d_stop) if d_stop else None,
-            "buses": [],
+            "buses": [], "has_reverse": False,
+            "showing_reverse": False,
+            "forward_count": 0, "reverse_count": 0,
         })
 
-    bus_rows_all = db.execute("SELECT * FROM buses").fetchall()
-    results = []
-    for b in bus_rows_all:
-        ordered = db.execute(
-            "SELECT stop_id FROM bus_stops WHERE bus_id=? ORDER BY position", (b["bus_id"],)
-        ).fetchall()
-        ids = [r["stop_id"] for r in ordered]
-        if o_stop["stop_id"] not in ids or d_stop["stop_id"] not in ids:
+    # Batch-load all bus→stop mappings in ONE query (avoids N+1)
+    bus_rows    = db.execute("SELECT * FROM buses").fetchall()
+    all_bs_rows = db.execute(
+        "SELECT bus_id, stop_id, position FROM bus_stops ORDER BY bus_id, position"
+    ).fetchall()
+
+    from collections import defaultdict
+    bus_stops_map: dict = defaultdict(list)
+    for r in all_bs_rows:
+        bus_stops_map[r["bus_id"]].append(r["stop_id"])
+
+    o_id = o_stop["stop_id"]
+    d_id = d_stop["stop_id"]
+    forward_buses: list = []
+    reverse_buses: list = []
+
+    for b in bus_rows:
+        ids = bus_stops_map.get(b["bus_id"], [])
+        if o_id not in ids or d_id not in ids:
             continue
-        oi = ids.index(o_stop["stop_id"])
-        di = ids.index(d_stop["stop_id"])
-        if oi >= di:
+        oi = ids.index(o_id)
+        di = ids.index(d_id)
+        if oi == di:
             continue
-        segment = [stops[ids[i]] for i in range(oi, di + 1)]
-        dist = sum(
-            haversine(segment[i]["lat"], segment[i]["lng"], segment[i + 1]["lat"], segment[i + 1]["lng"])
-            for i in range(len(segment) - 1)
-        )
-        eta_min = max(1, int(dist / 25 * 60) + 2)
-        if b["status"] == "delayed":   eta_min += 8
-        elif b["status"] == "cancelled": eta_min += 30
-        bus = bus_row(b, db)
-        bus["eta_min"]      = eta_min
-        bus["from_stop"]    = stop_row(o_stop)
-        bus["to_stop"]      = stop_row(d_stop)
-        bus["segment_stops"] = [stop_row(s) for s in segment]
-        results.append(bus)
-    results.sort(key=lambda x: x["eta_min"])
+
+        if oi < di:
+            # ── Forward: bus direction matches user's direction ──
+            segment = [stops_idx[ids[k]] for k in range(oi, di + 1) if ids[k] in stops_idx]
+            dist = sum(
+                haversine(segment[k]["lat"], segment[k]["lng"],
+                          segment[k + 1]["lat"], segment[k + 1]["lng"])
+                for k in range(len(segment) - 1)
+            ) if len(segment) > 1 else 0
+            eta_min = max(1, int(dist / 25 * 60) + 2)
+            if b["status"] == "delayed":    eta_min += 8
+            elif b["status"] == "cancelled": eta_min += 30
+            entry = bus_row(b, db)
+            entry.update({
+                "eta_min":        eta_min,
+                "from_stop":      stop_row(o_stop),
+                "to_stop":        stop_row(d_stop),
+                "segment_stops":  [stop_row(s) for s in segment],
+                "is_reverse":     False,
+                "match_type":     "direct",
+            })
+            forward_buses.append(entry)
+        else:
+            # ── Reverse: bus travels D→O while user asked O→D ──
+            segment = [stops_idx[ids[k]] for k in range(di, oi + 1) if ids[k] in stops_idx]
+            dist = sum(
+                haversine(segment[k]["lat"], segment[k]["lng"],
+                          segment[k + 1]["lat"], segment[k + 1]["lng"])
+                for k in range(len(segment) - 1)
+            ) if len(segment) > 1 else 0
+            eta_min = max(5, int(dist / 25 * 60) + 5)
+            entry = bus_row(b, db)
+            entry.update({
+                "eta_min":        eta_min,
+                "from_stop":      stop_row(d_stop),   # reversed endpoints
+                "to_stop":        stop_row(o_stop),
+                "segment_stops":  [stop_row(s) for s in segment],
+                "is_reverse":     True,
+                "match_type":     "reverse",
+            })
+            reverse_buses.append(entry)
+
+    forward_buses.sort(key=lambda x: x["eta_min"])
+    reverse_buses.sort(key=lambda x: x["eta_min"])
+
+    # Prefer forward; fall back to reverse with clear flag
+    showing_reverse = (not forward_buses) and bool(reverse_buses)
+    buses = forward_buses if forward_buses else reverse_buses
+
     return jsonify({
         "origin_stop":      stop_row(o_stop),
         "destination_stop": stop_row(d_stop),
-        "buses": results,
+        "buses":            buses,
+        "has_reverse":      bool(reverse_buses),
+        "showing_reverse":  showing_reverse,
+        "forward_count":    len(forward_buses),
+        "reverse_count":    len(reverse_buses),
     })
 
 
