@@ -2,9 +2,9 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Navigation, Search, LocateFixed, Plus, Newspaper,
-  AlertTriangle, Bookmark, ArrowUpDown, Bus, Radio,
-  ChevronRight, Clock, MapPin, Loader2, X, Wifi, WifiOff,
-  Activity, Users, Star,
+  AlertTriangle, Bookmark, ArrowUpDown, Bus,
+  ChevronRight, Clock, MapPin, Loader2, X,
+  Activity,
 } from "lucide-react";
 
 /* ── helpers ── */
@@ -127,36 +127,6 @@ export default function LandingPage({
       className="flex flex-col min-h-full overflow-y-auto no-scrollbar"
       style={{ background: "#0A0A0F", paddingBottom: 80 }}
     >
-      {/* ── Live status bar ── */}
-      <motion.div
-        initial={{ opacity: 0, y: -8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
-        className="mx-4 mt-4 mb-2 flex items-center justify-between px-4 py-2.5 rounded-2xl"
-        style={{ background: "#0f0f1a", border: "1px solid #1e1e2e" }}
-      >
-        <div className="flex items-center gap-2">
-          {connected
-            ? <Wifi className="w-3.5 h-3.5" style={{ color: "#22c55e" }} />
-            : <WifiOff className="w-3.5 h-3.5" style={{ color: "#4b5563" }} />}
-          <span className="text-xs font-bold" style={{ color: connected ? "#22c55e" : "#4b5563" }}>
-            {connected ? "Live Feed Active" : "Connecting…"}
-          </span>
-        </div>
-        <div className="flex items-center gap-3 text-xs">
-          <span style={{ color: "#22c55e" }}>
-            <span className="font-bold">{runningBuses}</span>
-            <span className="ml-1" style={{ color: "#374151" }}>on time</span>
-          </span>
-          {delayedBuses > 0 && (
-            <span style={{ color: "#eab308" }}>
-              <span className="font-bold">{delayedBuses}</span>
-              <span className="ml-1" style={{ color: "#374151" }}>delayed</span>
-            </span>
-          )}
-        </div>
-      </motion.div>
-
       {/* ── Greeting ── */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -426,61 +396,6 @@ export default function LandingPage({
                 </div>
               </motion.button>
             ))}
-          </div>
-        </motion.div>
-      )}
-
-      {/* ── Live Buses strip ── */}
-      {buses.filter((b) => b.current_lat != null).length > 0 && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-          className="px-4 mt-5"
-        >
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-bold uppercase tracking-widest" style={{ color: "#374151" }}>Live Buses</p>
-            <button
-              onClick={() => onAction("live")}
-              className="text-[10px] uppercase tracking-widest font-bold px-2 py-1 rounded-lg"
-              style={{ color: "#818cf8", background: "#818cf822" }}
-            >
-              View Map
-            </button>
-          </div>
-          <div className="flex gap-2.5 overflow-x-auto no-scrollbar pb-1">
-            {buses
-              .filter((b) => b.current_lat != null)
-              .map((b) => {
-                const colors = {
-                  running:   { color: "#22c55e", bg: "#0d2a1a", border: "#166534" },
-                  delayed:   { color: "#eab308", bg: "#1f1a07", border: "#713f12" },
-                  arriving:  { color: "#3b82f6", bg: "#0d1a2e", border: "#1e3a5f" },
-                  cancelled: { color: "#ef4444", bg: "#1f0d0d", border: "#7f1d1d" },
-                  bus_full:  { color: "#f97316", bg: "#1f1007", border: "#7c3000" },
-                };
-                const c = colors[b.status] || colors.running;
-                return (
-                  <motion.button
-                    key={b.bus_id}
-                    onClick={() => onAction("live")}
-                    whileTap={{ scale: 0.95 }}
-                    className="shrink-0 flex flex-col items-center gap-1.5 px-4 py-3 rounded-2xl"
-                    style={{ background: c.bg, border: `1px solid ${c.border}`, minWidth: 72 }}
-                  >
-                    <div className="relative">
-                      <span className="text-base font-black" style={{ color: c.color }}>{b.number}</span>
-                      <span
-                        className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
-                        style={{ background: c.color }}
-                      />
-                    </div>
-                    <span className="text-[10px] font-medium truncate max-w-[64px] text-center" style={{ color: c.color + "99" }}>
-                      {b.status}
-                    </span>
-                  </motion.button>
-                );
-              })}
           </div>
         </motion.div>
       )}
