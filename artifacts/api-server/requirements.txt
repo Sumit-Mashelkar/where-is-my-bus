@@ -1,0 +1,6 @@
+Flask==3.1.1
+Flask-Cors==6.0.0
+python-socketio==5.12.1
+asgiref==3.8.1
+uvicorn==0.34.3
+python-dotenv==1.1.0
