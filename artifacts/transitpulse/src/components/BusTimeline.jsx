@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, Bell, BellOff, Bus, ChevronDown, ChevronUp,
+  ArrowLeft, ArrowRight, Bell, BellOff, Bus, ChevronDown, ChevronUp,
   Clock, RefreshCw, X, MapPin, AlertTriangle,
-  Radio, Navigation,
+  Radio, Navigation, Shield,
 } from "lucide-react";
 import { get, post, invalidateCache } from "@/lib/api";
 import { socket } from "@/lib/socket";
@@ -30,7 +30,7 @@ const INSIDE_BUS_STATUSES = [
 
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 const COOLDOWN_KEY = (busId) => `tp_report_cooldown_${busId}`;
-const COOLDOWN_MS = 60_000;
+const COOLDOWN_MS = 120_000; // 2-minute cooldown matches backend
 
 /* ── helpers ── */
 function parseTimeMins(t) {
@@ -84,15 +84,22 @@ function setCooldown(busId) {
   try { localStorage.setItem(COOLDOWN_KEY(busId), String(Date.now())); } catch {}
 }
 
-/* ── Inside Bus Modal ── */
+function getReliability(secondsAgo, lastSyncedAt) {
+  if (!lastSyncedAt) return { score: "unknown", label: "Awaiting data", color: "#4b5563" };
+  if (secondsAgo < 180) return { score: "high",   label: "High Confidence", color: "#22c55e" };
+  if (secondsAgo < 900) return { score: "medium", label: "Med Confidence",  color: "#eab308" };
+  return                       { score: "low",    label: "Low Confidence",  color: "#ef4444" };
+}
+
+/* ── Inside Bus Modal (2-step) ── */
 const InsideBusModal = memo(function InsideBusModal({ stops, busId, onClose, currentIdx }) {
+  const [step,       setStep]       = useState(1);
   const [stopIdx,    setStopIdx]    = useState(currentIdx);
-  const [direction,  setDirection]  = useState("");
   const [status,     setStatus]     = useState("running");
   const [submitting, setSubmitting] = useState(false);
   const userId = getUserId();
-
   const cooldown = cooldownRemaining(busId);
+  const selectedStatus = INSIDE_BUS_STATUSES.find((s) => s.value === status);
 
   const handleSubmit = async () => {
     const rem = cooldownRemaining(busId);
@@ -105,17 +112,18 @@ const InsideBusModal = memo(function InsideBusModal({ stops, busId, onClose, cur
       await post(`/buses/${busId}/status-update`, {
         stop_index: stopIdx,
         status,
-        direction: direction || undefined,
         user_id: userId,
       });
       setCooldown(busId);
       invalidateCache(`/buses/${busId}`);
-      toast.success("Report submitted — thanks for helping!");
+      toast.success("Report submitted — thanks for helping! 🙌");
       onClose();
     } catch (e) {
       const detail = e?.response?.data?.detail;
       if (detail === "rate_limited") {
-        toast.error("Please wait 60 seconds before reporting again");
+        toast.error("Please wait 2 minutes before reporting again");
+      } else if (detail === "stop_regression") {
+        toast.error("That stop is behind the bus's current position");
       } else {
         toast.error("Failed to submit — please try again");
       }
@@ -143,96 +151,101 @@ const InsideBusModal = memo(function InsideBusModal({ stops, busId, onClose, cur
         <div className="flex justify-center pt-3 pb-1">
           <div className="w-10 h-1 rounded-full" style={{ background: "#374151" }} />
         </div>
+
+        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: "1px solid #1e1e2e" }}>
           <div className="flex items-center gap-2.5">
+            {step === 2 && (
+              <button
+                onClick={() => setStep(1)}
+                className="w-7 h-7 flex items-center justify-center rounded-full mr-0.5"
+                style={{ background: "#1e1e2e" }}
+              >
+                <ArrowLeft className="w-3.5 h-3.5" style={{ color: "#9ca3af" }} />
+              </button>
+            )}
             <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: "#1a2a4a" }}>
               <Bus className="w-4 h-4 text-blue-400" />
             </div>
             <div>
-              <p className="text-white font-bold text-sm">Report from Inside Bus</p>
-              <p className="text-xs" style={{ color: "#6b7280" }}>Help other riders with real-time info</p>
+              <p className="text-white font-bold text-sm">
+                {step === 1 ? "What's the bus status?" : "Confirm your stop"}
+              </p>
+              <div className="flex items-center gap-1 mt-0.5">
+                {[1, 2].map((n) => (
+                  <div key={n} className="h-1 rounded-full transition-all duration-300"
+                    style={{ width: step >= n ? 20 : 10, background: step >= n ? "#3b82f6" : "#2d2d4e" }} />
+                ))}
+              </div>
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full" style={{ background: "#1e1e2e" }}>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full"
+            style={{ background: "#1e1e2e" }}>
             <X className="w-4 h-4" style={{ color: "#6b7280" }} />
           </button>
         </div>
 
         {cooldown > 0 ? (
-          <div className="px-5 py-8 text-center">
-            <Clock className="w-8 h-8 mx-auto mb-3" style={{ color: "#374151" }} />
+          <div className="px-5 py-10 text-center">
+            <Clock className="w-9 h-9 mx-auto mb-3" style={{ color: "#374151" }} />
             <p className="text-white font-bold">Cooldown active</p>
             <p className="text-sm mt-1" style={{ color: "#6b7280" }}>
               You can report again in {Math.ceil(cooldown / 1000)}s
             </p>
           </div>
+        ) : step === 1 ? (
+          /* ── Step 1: Status grid ── */
+          <div className="px-5 py-4 pb-8 flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-3">
+              {INSIDE_BUS_STATUSES.map((opt) => {
+                const sel = status === opt.value;
+                return (
+                  <button key={opt.value} onClick={() => setStatus(opt.value)}
+                    className="flex flex-col items-center gap-2 py-5 rounded-2xl font-semibold text-sm transition-all"
+                    style={{
+                      background: sel ? "#1a2a4a" : "#141420",
+                      border: `2px solid ${sel ? "#3b82f6" : "#2d2d4e"}`,
+                      color: sel ? "#60a5fa" : "#6b7280",
+                    }}>
+                    <span className="text-3xl">{opt.icon}</span>
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            <motion.button whileTap={{ scale: 0.97 }} onClick={() => setStep(2)}
+              className="w-full py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2"
+              style={{ background: "#3b82f6", color: "#fff" }}>
+              Next — Confirm Stop
+              <ArrowRight className="w-4 h-4" />
+            </motion.button>
+          </div>
         ) : (
-          <div className="px-5 py-4 flex flex-col gap-4 pb-8">
+          /* ── Step 2: Stop picker + submit ── */
+          <div className="px-5 py-4 pb-8 flex flex-col gap-4">
+            <div className="flex items-center gap-3 px-4 py-3 rounded-2xl"
+              style={{ background: "#141420", border: "1px solid #2d2d4e" }}>
+              <span className="text-2xl">{selectedStatus?.icon}</span>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "#4b5563" }}>Reporting status</p>
+                <p className="text-sm font-bold text-white">{selectedStatus?.label}</p>
+              </div>
+            </div>
             <div>
               <label className="text-xs font-bold uppercase tracking-widest mb-2 block" style={{ color: "#4b5563" }}>
-                Current Stop
+                Which stop are you at?
               </label>
-              <select
-                value={stopIdx}
-                onChange={(e) => setStopIdx(Number(e.target.value))}
+              <select value={stopIdx} onChange={(e) => setStopIdx(Number(e.target.value))}
                 className="w-full px-4 py-3 rounded-2xl text-sm font-medium text-white appearance-none"
-                style={{ background: "#141420", border: "1px solid #2d2d4e", outline: "none" }}
-              >
+                style={{ background: "#141420", border: "1px solid #2d2d4e", outline: "none" }}>
                 {stops.map((s, i) => (
                   <option key={s.stop_id} value={i}>{s.name}</option>
                 ))}
               </select>
             </div>
-
-            <div>
-              <label className="text-xs font-bold uppercase tracking-widest mb-2 block" style={{ color: "#4b5563" }}>
-                Bus Direction <span style={{ color: "#374151" }}>(optional)</span>
-              </label>
-              <select
-                value={direction}
-                onChange={(e) => setDirection(e.target.value)}
-                className="w-full px-4 py-3 rounded-2xl text-sm font-medium text-white appearance-none"
-                style={{ background: "#141420", border: "1px solid #2d2d4e", outline: "none" }}
-              >
-                <option value="">Not sure</option>
-                <option value="forward">Forward (towards end)</option>
-                <option value="reverse">Reverse (towards start)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-bold uppercase tracking-widest mb-2 block" style={{ color: "#4b5563" }}>
-                Bus Status
-              </label>
-              <div className="grid grid-cols-3 gap-2">
-                {INSIDE_BUS_STATUSES.map((opt) => {
-                  const selected = status === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      onClick={() => setStatus(opt.value)}
-                      className="flex flex-col items-center gap-1.5 py-3 rounded-2xl text-xs font-semibold"
-                      style={{
-                        background: selected ? "#1a2a4a" : "#141420",
-                        border: `1.5px solid ${selected ? "#3b82f6" : "#2d2d4e"}`,
-                        color: selected ? "#60a5fa" : "#6b7280",
-                      }}
-                    >
-                      <span className="text-lg">{opt.icon}</span>
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              onClick={handleSubmit}
-              disabled={submitting}
+            <motion.button whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={submitting}
               className="w-full py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
-              style={{ background: "#3b82f6", color: "#fff" }}
-            >
+              style={{ background: "#3b82f6", color: "#fff" }}>
               {submitting ? (
                 <motion.div animate={{ rotate: 360 }} transition={{ duration: 0.8, repeat: Infinity, ease: "linear" }}>
                   <RefreshCw className="w-4 h-4" />
@@ -667,14 +680,24 @@ export default function BusTimeline({ bus: initialBus, onBack, onUpdateLocation 
             </button>
           </div>
 
-          {/* Status badge + progress */}
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold"
+          {/* Status badge + reliability + progress */}
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold shrink-0"
               style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color }}>
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.color }} />
               {cfg.label}
             </div>
-            <span className="text-xs font-bold" style={{ color: cfg.color }}>{progress}%</span>
+            {(() => {
+              const rel = getReliability(secondsAgo, lastSyncedAt);
+              return (
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-semibold shrink-0"
+                  style={{ background: rel.color + "18", border: `1px solid ${rel.color}44`, color: rel.color }}>
+                  <Shield className="w-3 h-3 shrink-0" />
+                  {rel.label}
+                </div>
+              );
+            })()}
+            <span className="ml-auto text-xs font-bold shrink-0" style={{ color: cfg.color }}>{progress}%</span>
           </div>
 
           <div className="mt-2">
@@ -807,6 +830,31 @@ export default function BusTimeline({ bus: initialBus, onBack, onUpdateLocation 
             </AnimatePresence>
           )}
 
+          {/* Passive "on this bus?" contribution prompt */}
+          {!loading && (
+            <motion.button
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowInsideBus(true)}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl mt-4"
+              style={{ background: "#0d1a2e", border: "1px solid #1e3a5f" }}
+            >
+              <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
+                style={{ background: "#1a2a4a" }}>
+                <Bus className="w-4 h-4 text-blue-400" />
+              </div>
+              <div className="flex-1 text-left">
+                <p className="text-sm font-bold text-white">Are you on this bus?</p>
+                <p className="text-xs mt-0.5" style={{ color: "#4b5563" }}>
+                  Help riders with a 2-tap report
+                </p>
+              </div>
+              <ArrowRight className="w-4 h-4 shrink-0" style={{ color: "#60a5fa" }} />
+            </motion.button>
+          )}
+
           {/* Community reports */}
           {!loading && (
             <div className="mt-4" style={{ borderTop: "1px solid #15152a" }}>
@@ -835,7 +883,13 @@ export default function BusTimeline({ bus: initialBus, onBack, onUpdateLocation 
                   transition={{ duration: 2, repeat: Infinity }}
                 />
                 <p className="text-sm font-semibold text-white truncate">
-                  {currentStop ? `Bus is at ${currentStop.name}` : bus?.name || "Tracking…"}
+                  {currentStop
+                    ? secondsAgo < 180
+                      ? `Bus is at ${currentStop.name}`
+                      : secondsAgo < 900
+                        ? `Likely near ${currentStop.name}`
+                        : `Last known: ${currentStop.name}`
+                    : bus?.name || "Tracking…"}
                 </p>
               </div>
               <p className="text-xs mt-0.5 ml-4" style={{ color: "#4b5563" }}>

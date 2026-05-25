@@ -99,8 +99,24 @@ def confidence_label(score: float) -> str:
 
 VERIFIED_MIN_CONFIRMS = 3
 VERIFIED_MIN_CONFIDENCE = 0.7
-RATE_LIMIT_SECONDS = 60
+RATE_LIMIT_SECONDS = 120        # 2-minute cooldown per user per bus
 MERGE_WINDOW_MINUTES = 10
+
+
+def compute_bus_reliability(last_update_iso: Optional[str]) -> dict:
+    """Compute reliability tier from data freshness only (no extra DB query)."""
+    if not last_update_iso:
+        return {"score": "unknown", "label": "No data yet",        "color": "#4b5563", "age_mins": None}
+    try:
+        lu = datetime.fromisoformat(last_update_iso.replace("Z", "+00:00"))
+        age_mins = int((datetime.now(timezone.utc) - lu).total_seconds() / 60)
+    except Exception:
+        return {"score": "unknown", "label": "No data yet",        "color": "#4b5563", "age_mins": None}
+    if age_mins < 3:
+        return {"score": "high",   "label": "High Confidence",   "color": "#22c55e", "age_mins": age_mins}
+    if age_mins < 10:
+        return {"score": "medium", "label": "Medium Confidence", "color": "#eab308", "age_mins": age_mins}
+    return     {"score": "low",    "label": "Low Confidence",    "color": "#ef4444", "age_mins": age_mins}
 
 
 def upsert_reputation(db: sqlite3.Connection, user_id: str) -> None:
@@ -350,6 +366,7 @@ def bus_row(r, db: sqlite3.Connection, with_stops: bool = False) -> dict:
         "current_lng":      r["current_lng"],
         "last_update":      r["last_update"],
         "current_stop_index": r["current_stop_index"] if "current_stop_index" in keys else 0,
+        "reliability": compute_bus_reliability(r["last_update"] if "last_update" in keys else None),
     }
     if with_stops:
         rows = db.execute(
@@ -567,6 +584,15 @@ def status_update(bus_id):
     idx   = max(0, min(int(stop_index), total - 1))
     ts    = now_iso()
     stop_name = stops[idx]["name"] if stops else "Unknown"
+
+    # Stop progression validation: block implausible backward jumps unless reversing
+    current_idx = r["current_stop_index"] or 0
+    if direction != "reverse" and total > 5 and idx < current_idx - 4:
+        return jsonify({
+            "detail": "stop_regression",
+            "message": "Reported stop is too far behind current position. "
+                       "Set direction=reverse if the bus turned around.",
+        }), 422
 
     # Smart merge: same stop+status within MERGE_WINDOW_MINUTES
     merge_cutoff = (datetime.now(timezone.utc) - timedelta(minutes=MERGE_WINDOW_MINUTES)).isoformat()

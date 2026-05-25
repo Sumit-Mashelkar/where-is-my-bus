@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, ChevronDown, ChevronUp, Radio, Clock,
   Filter, MapPin, ArrowRight, ArrowLeft as ArrowLeftIcon,
-  AlertTriangle, RotateCcw, Zap, Navigation,
+  AlertTriangle, RotateCcw, Zap, Navigation, Shield,
 } from "lucide-react";
 
 /* ── constants ── */
@@ -26,6 +26,21 @@ function parseTimeMins(t) {
   if (!t) return 0;
   const [h, m] = t.split(":").map(Number);
   return h * 60 + m;
+}
+
+function getLastUpdateAgeMins(lastUpdate) {
+  if (!lastUpdate) return null;
+  try {
+    const lu = new Date(lastUpdate);
+    return Math.floor((Date.now() - lu.getTime()) / 60000);
+  } catch { return null; }
+}
+
+function busReliability(ageMins) {
+  if (ageMins === null) return { score: "unknown", label: "No data",        color: "#4b5563" };
+  if (ageMins < 3)      return { score: "high",    label: "High Confidence", color: "#22c55e" };
+  if (ageMins < 10)     return { score: "medium",  label: "Med Confidence",  color: "#eab308" };
+  return                       { score: "low",     label: "Low Confidence",  color: "#ef4444" };
 }
 
 function fmtDuration(mins) {
@@ -150,7 +165,7 @@ const BusCard = memo(function BusCard({ bus, idx, onSelect }) {
           </div>
         </div>
 
-        {/* Row 2: Status + live + upcoming stop */}
+        {/* Row 2: Status + reliability + live + upcoming stop */}
         <div className="flex items-center gap-2 mt-2.5 flex-wrap">
           <div
             className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-semibold"
@@ -160,23 +175,29 @@ const BusCard = memo(function BusCard({ bus, idx, onSelect }) {
             {cfg.label}
           </div>
 
+          {(() => {
+            const ageMins = getLastUpdateAgeMins(bus.last_update);
+            const rel = busReliability(ageMins);
+            return (
+              <div
+                className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold"
+                style={{ background: rel.color + "18", border: `1px solid ${rel.color}44`, color: rel.color }}
+              >
+                <Shield className="w-2.5 h-2.5 shrink-0" />
+                {rel.label}
+              </div>
+            );
+          })()}
+
           {hasLive ? (
             <div
               className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold"
               style={{ background: "#0d2a1a", border: "1px solid #166534", color: "#22c55e" }}
             >
               <Radio className="w-2.5 h-2.5 animate-pulse" />
-              Live GPS
+              Live
             </div>
-          ) : (
-            <div
-              className="flex items-center gap-1 px-2 py-1 rounded-full text-xs"
-              style={{ background: "#1e1e2e", border: "1px solid #374151", color: "#4b5563" }}
-            >
-              <Zap className="w-2.5 h-2.5" />
-              No GPS
-            </div>
-          )}
+          ) : null}
 
           {upcomingStop && (
             <div
