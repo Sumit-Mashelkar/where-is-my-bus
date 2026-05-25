@@ -5,7 +5,6 @@ import { useTheme } from "@/lib/theme";
 import { socket } from "@/lib/socket";
 import { getUserId } from "@/lib/userId";
 
-import MapView        from "@/components/MapView";
 import SearchResults  from "@/components/SearchResults";
 import BusTimeline    from "@/components/BusTimeline";
 import AddRouteSheet  from "@/components/AddRouteSheet";
@@ -15,7 +14,7 @@ import LandingPage    from "@/components/LandingPage";
 import BottomNav      from "@/components/BottomNav";
 
 import {
-  Menu, Bell, Sun, Moon, Bus, Radio, ArrowLeft,
+  Menu, Bell, Sun, Moon, Bus, ArrowLeft,
   User, Shield, Star, Activity, Clock, Trash2, X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -240,7 +239,7 @@ function ProfileSheet({ open, onClose, theme, toggle, searchHistory, onClearHist
 }
 
 /* ── Top navigation bar ── */
-function TopBar({ onMenuOpen, onBellClick, pendingCount, connected }) {
+function TopBar({ onMenuOpen, onBellClick, pendingCount }) {
   return (
     <div
       className="fixed top-0 left-0 right-0 z-[35] flex items-center justify-between px-4"
@@ -262,14 +261,7 @@ function TopBar({ onMenuOpen, onBellClick, pendingCount, connected }) {
         <div className="w-6 h-6 flex items-center justify-center rounded-lg" style={{ background:"#818cf822" }}>
           <Bus className="w-3.5 h-3.5" style={{ color:"#818cf8" }} />
         </div>
-        <div>
-          <p className="font-black text-white tracking-tighter text-sm leading-none">TransitPulse</p>
-          <p className="text-[9px] flex items-center gap-1 mt-0.5 uppercase tracking-[0.2em]"
-            style={{ color: connected ? "#22c55e" : "#4b5563" }}>
-            <Radio className={`w-2 h-2 ${connected ? "animate-pulse" : ""}`} />
-            {connected ? "Live" : "Offline"}
-          </p>
-        </div>
+        <p className="font-black text-white tracking-tighter text-sm">TransitPulse</p>
       </div>
 
       <motion.button onClick={onBellClick} whileTap={{ scale:0.88 }}
@@ -290,13 +282,12 @@ function TopBar({ onMenuOpen, onBellClick, pendingCount, connected }) {
 /* ── Sidebar ── */
 function Sidebar({ open, onClose, onAction, theme, toggle, buses, pendingCount }) {
   const items = [
-    { id:"live",    Icon: Bus,          label:"Live Map",          sub:"Full-screen bus map",   color:"#22c55e" },
     { id:"add",     Icon: Activity,     label:"Add Route",         sub:"Propose a new route",   color:"#818cf8" },
     { id:"updates", Icon: Bell,         label:"Community Updates", sub:"Vote on proposals",      color:"#f472b6", badge: pendingCount || null },
     { id:"report",  Icon: Clock,        label:"Report Delay",      sub:"Update bus status",      color:"#eab308" },
     { id:"theme",   Icon: theme==="dark" ? Sun : Moon,
       label: theme==="dark" ? "Light Mode" : "Dark Mode",
-      sub:"Toggle map theme", color:"#a78bfa" },
+      sub:"Toggle appearance", color:"#a78bfa" },
   ];
 
   useEffect(() => {
@@ -511,13 +502,11 @@ export default function Home() {
 
   /* ── sidebar / quick card actions ── */
   const handleAction = useCallback((id) => {
-    if (id === "live")    { setView("map"); setActiveTab("live"); }
     if (id === "search")  { setView("home"); setActiveTab("home"); }
     if (id === "nearby")  setNearbyOpen(true);
     if (id === "add")     setAddRouteOpen(true);
     if (id === "updates") { setUpdatesOpen(true); setActiveTab("updates"); }
     if (id === "report")  setBusPickerOpen(true);
-    if (id === "stats")   { setView("map"); setActiveTab("live"); }
   }, []);
 
   /* ── bottom nav ── */
@@ -525,7 +514,6 @@ export default function Home() {
     setActiveTab(tab);
     if (tab === "home")    setView("home");
     if (tab === "routes")  { if (!results) setView("home"); else setView("results"); }
-    if (tab === "live")    setView("map");
     if (tab === "updates") setUpdatesOpen(true);
     if (tab === "profile") setProfileOpen(true);
   }, [results]);
@@ -543,25 +531,11 @@ export default function Home() {
   const clearHistory = useCallback(() => { setSearchHistory([]); saveHistory([]); }, []);
 
   /* ── derived ── */
-  const routeStops   = results?.buses?.[0]?.segment_stops || null;
-  const showBottomNav = view === "home" || view === "map";
+  const showBottomNav = view === "home";
   const topBarHeight  = 64;
 
   return (
     <div className="relative w-screen h-[100dvh] overflow-hidden" style={{ background:"#0A0A0F" }}>
-
-      {/* Map (render for non-home views) */}
-      {view !== "home" && (
-        <MapView
-          theme={theme}
-          buses={buses}
-          stops={stops}
-          routeStops={view === "results" ? routeStops : null}
-          origin={view === "results" ? results?.origin_stop : null}
-          destination={view === "results" ? results?.destination_stop : null}
-          selectedBus={activeBus}
-        />
-      )}
 
       {/* Home landing */}
       {view === "home" && (
@@ -586,34 +560,12 @@ export default function Home() {
         </div>
       )}
 
-      {/* Map view top controls */}
-      {view === "map" && (
-        <div className="absolute top-0 left-0 right-0 z-[30] flex items-center justify-between px-4"
-          style={{ paddingTop:"max(env(safe-area-inset-top),12px)", paddingBottom:12 }}>
-          <motion.button onClick={() => { setView("home"); setActiveTab("home"); }} whileTap={{ scale:0.88 }}
-            className="flex items-center gap-2 px-3 py-2 rounded-2xl"
-            style={{ background:"rgba(15,15,26,0.92)", border:"1px solid #1e1e2e", backdropFilter:"blur(20px)" }}>
-            <ArrowLeft className="w-4 h-4" style={{ color:"#9ca3af" }} />
-            <span className="text-sm font-bold text-white">TransitPulse</span>
-          </motion.button>
-          <div className="flex items-center gap-1.5 px-3 py-2 rounded-2xl"
-            style={{ background:"rgba(15,15,26,0.92)", border:"1px solid #1e1e2e", backdropFilter:"blur(20px)" }}>
-            <Radio className={`w-2.5 h-2.5 ${connected ? "animate-pulse" : ""}`}
-              style={{ color: connected ? "#22c55e" : "#4b5563" }} />
-            <span className="text-xs font-bold" style={{ color: connected ? "#22c55e" : "#4b5563" }}>
-              {buses.length} buses
-            </span>
-          </div>
-        </div>
-      )}
-
       {/* Top nav (home only) */}
       {view === "home" && (
         <TopBar
           onMenuOpen={() => setSidebarOpen(true)}
           onBellClick={() => { setUpdatesOpen(true); setActiveTab("updates"); }}
           pendingCount={pendingCount}
-          connected={connected}
         />
       )}
 

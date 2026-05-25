@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowLeft, ArrowRight, Bell, BellOff, Bus, ChevronDown, ChevronUp,
-  Clock, RefreshCw, X, MapPin, AlertTriangle,
-  Radio, Navigation, Shield,
+  Clock, RefreshCw, X, AlertTriangle, Shield,
 } from "lucide-react";
 import { get, post, invalidateCache } from "@/lib/api";
 import { socket } from "@/lib/socket";
@@ -640,13 +639,6 @@ export default function BusTimeline({ bus: initialBus, onBack, onUpdateLocation 
                 </p>
               )}
             </div>
-            {bus?.current_lat != null && (
-              <div className="flex items-center gap-1 px-2 py-1 rounded-full shrink-0"
-                style={{ background: "#0d2a1a", border: "1px solid #166534" }}>
-                <Radio className="w-3 h-3 text-green-400 animate-pulse" />
-                <span className="text-xs text-green-400 font-medium">Live</span>
-              </div>
-            )}
           </div>
 
           {/* Action row */}

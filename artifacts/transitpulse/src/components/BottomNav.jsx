@@ -1,12 +1,11 @@
 import { motion } from "framer-motion";
-import { Home, Map, Navigation, Newspaper, User } from "lucide-react";
+import { Home, Map, Newspaper, User } from "lucide-react";
 
 const TABS = [
-  { id: "home",    Icon: Home,       label: "Home"    },
-  { id: "routes",  Icon: Map,        label: "Routes"  },
-  { id: "live",    Icon: Navigation, label: "Live"    },
-  { id: "updates", Icon: Newspaper,  label: "Updates" },
-  { id: "profile", Icon: User,       label: "Profile" },
+  { id: "home",    Icon: Home,      label: "Home"    },
+  { id: "routes",  Icon: Map,       label: "Routes"  },
+  { id: "updates", Icon: Newspaper, label: "Updates" },
+  { id: "profile", Icon: User,      label: "Profile" },
 ];
 
 export default function BottomNav({ active, onChange, badge = {} }) {

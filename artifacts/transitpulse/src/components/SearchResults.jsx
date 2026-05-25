@@ -1,9 +1,9 @@
 import { useState, useMemo, memo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowLeft, ChevronDown, ChevronUp, Radio, Clock,
+  ArrowLeft, ChevronDown, ChevronUp, Clock,
   Filter, MapPin, ArrowRight, ArrowLeft as ArrowLeftIcon,
-  AlertTriangle, RotateCcw, Zap, Navigation, Shield,
+  AlertTriangle, RotateCcw, Navigation, Shield,
 } from "lucide-react";
 
 /* ── constants ── */
@@ -189,15 +189,6 @@ const BusCard = memo(function BusCard({ bus, idx, onSelect }) {
             );
           })()}
 
-          {hasLive ? (
-            <div
-              className="flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold"
-              style={{ background: "#0d2a1a", border: "1px solid #166534", color: "#22c55e" }}
-            >
-              <Radio className="w-2.5 h-2.5 animate-pulse" />
-              Live
-            </div>
-          ) : null}
 
           {upcomingStop && (
             <div
